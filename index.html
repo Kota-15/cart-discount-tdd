@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>カート割引・ポイント計算</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+      background: #f4f6f9;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 480px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #2E4057;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 0.85rem;
+      color: #888;
+      margin-bottom: 32px;
+    }
+
+    .field {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 6px;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #dde1e8;
+      border-radius: 8px;
+      font-size: 1rem;
+      color: #222;
+      background: #fafbfc;
+      transition: border-color 0.15s;
+      appearance: none;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: #2E4057;
+      background: #fff;
+    }
+
+    .order-note {
+      font-size: 0.78rem;
+      color: #aaa;
+      margin-top: 20px;
+      margin-bottom: 24px;
+      line-height: 1.6;
+    }
+
+    button {
+      width: 100%;
+      padding: 13px;
+      background: #2E4057;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    button:hover { background: #3a5070; }
+    button:active { transform: scale(0.98); }
+    button:disabled { background: #aaa; cursor: not-allowed; }
+
+    .result {
+      margin-top: 28px;
+      padding: 20px 24px;
+      background: #f0f4f8;
+      border-radius: 12px;
+      display: none;
+    }
+
+    .result.visible { display: block; }
+    .result.error { background: #fff0f0; }
+
+    .result-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 6px 0;
+    }
+
+    .result-row + .result-row {
+      border-top: 1px solid #dde1e8;
+    }
+
+    .result-label { font-size: 0.9rem; color: #666; }
+
+    .result-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #2E4057;
+    }
+
+    .result-value.small {
+      font-size: 1.1rem;
+      color: #555;
+    }
+
+    .error-msg { color: #c0392b; font-size: 0.9rem; }
+
+    .steps {
+      margin-top: 16px;
+      font-size: 0.78rem;
+      color: #999;
+      line-height: 1.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🛒 カート割引・ポイント計算</h1>
+    <p class="subtitle">会員ランク・クーポン・ポイントを組み合わせた支払金額を計算します</p>
+
+    <div class="field">
+      <label for="total">合計金額（円）</label>
+      <input type="number" id="total" min="0" value="1000" placeholder="例：1000" />
+    </div>
+
+    <div class="field">
+      <label for="rank">会員ランク</label>
+      <select id="rank">
+        <option value="general">一般会員（割引なし）</option>
+        <option value="premium">プレミアム会員（5%オフ）</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="coupon">クーポン</label>
+      <select id="coupon">
+        <option value="none">なし</option>
+        <option value="10%_off">10%オフ</option>
+        <option value="500_off">500円引き</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="points">使用ポイント（1ポイント＝1円）</label>
+      <input type="number" id="points" min="0" value="0" placeholder="例：200" />
+    </div>
+
+    <p class="order-note">
+      計算順序：① 会員割引 → ② クーポン → ③ ポイント適用<br>
+      端数は切り捨て、支払金額は0円未満になりません。
+    </p>
+
+    <button id="calcBtn" onclick="calculate()">計算する</button>
+
+    <div class="result" id="result">
+      <div id="resultContent"></div>
+    </div>
+  </div>
+
+  <script>
+    async function calculate() {
+      const btn = document.getElementById("calcBtn");
+      const resultEl = document.getElementById("result");
+      const contentEl = document.getElementById("resultContent");
+
+      const total = parseInt(document.getElementById("total").value) || 0;
+      const rank = document.getElementById("rank").value;
+      const coupon = document.getElementById("coupon").value;
+      const points = parseInt(document.getElementById("points").value) || 0;
+
+      btn.disabled = true;
+      btn.textContent = "計算中...";
+      resultEl.className = "result";
+
+      try {
+        const res = await fetch("/api/calculate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            total_amount: total,
+            membership_rank: rank,
+            coupon: coupon,
+            points_to_use: points,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (data.error) {
+          contentEl.innerHTML = `<p class="error-msg">エラー: ${data.error}</p>`;
+          resultEl.className = "result visible error";
+        } else {
+          const rankLabel = rank === "premium" ? "プレミアム（-5%）" : "一般";
+          const couponLabel = { none: "なし", "10%_off": "10%オフ", "500_off": "500円引き" }[coupon];
+
+          contentEl.innerHTML = `
+            <div class="result-row">
+              <span class="result-label">支払金額</span>
+              <span class="result-value">¥${data.payment.toLocaleString()}</span>
+            </div>
+            <div class="result-row">
+              <span class="result-label">消費ポイント</span>
+              <span class="result-value small">${data.consumed_points.toLocaleString()} pt</span>
+            </div>
+            <p class="steps">
+              合計 ¥${total.toLocaleString()} ／ ${rankLabel} ／ クーポン: ${couponLabel}
+            </p>
+          `;
+          resultEl.className = "result visible";
+        }
+      } catch (e) {
+        contentEl.innerHTML = `<p class="error-msg">通信エラーが発生しました</p>`;
+        resultEl.className = "result visible error";
+      }
+
+      btn.disabled = false;
+      btn.textContent = "計算する";
+    }
+  </script>
+</body>
+</html>
